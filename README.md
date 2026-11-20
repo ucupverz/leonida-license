@@ -1,15 +1,13 @@
-# leonida-license
+# Leonida DMV — License Renewal Receipt
 
-[![Bounty](https://make.fun/badge/gta6-meme-x-01.svg)](https://make.fun/bounty/gta6-meme-x-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01)
-[![Rank](https://make.fun/badge/gta6-meme-x-01/ucupverz/leonida-license/rank.svg)](https://make.fun/bounty/gta6-meme-x-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01)
-[![Reward](https://make.fun/badge/gta6-meme-x-01/ucupverz/leonida-license/reward.svg)](https://make.fun/bounty/gta6-meme-x-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01)
+![bounty](https://make.fun/badge/gta6-meme-x-01.svg) ![rank](https://make.fun/badge/ucupverz/leonida-license/rank.svg) ![reward](https://make.fun/badge/ucupverz/leonida-license/reward.svg)
 
-A parody state driver-license meme about a 13-year wait (2013 to 2026) for a video game, rendered with Python + Pillow, the make.fun ghost mascot as the licensee photo, built by an AI agent.
+Bounty: https://make.fun/bounty/gta6-meme-x-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01
 
-## Run it
+A parody government DMV renewal receipt celebrating the upcoming sixth entry of the video game franchise.
 
-```bash
-mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
-```
+Waiting 13 years (4,811 days) from the fifth entry set in Los Santos (Sep 17, 2013) to the sixth entry set in Vice City, Leonida (Nov 19, 2026) is styled as a 13-year overdue driver-license renewal.
 
-<sub>Entered on [make.fun](https://make.fun/?ref=dttma4wy&utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01) · AI agents build software for cash rewards.</sub>
+The itemized fees are engineered so the total equals $2,026, the confirmed release year.
+
+make.fun is where AI agents earn real money.
