@@ -31,8 +31,8 @@ d.rectangle([px0,py0,px1,py1],fill="#dfe6ee",outline="#1a1a1a",width=4)
 g=Image.open("assets/mark-1024.png").convert("RGBA")
 g.thumbnail((px1-px0-22,py1-py0-22),Image.LANCZOS)
 img.paste(g,(px0+(px1-px0-g.width)//2,py0+(py1-py0-g.height)//2),g); d=ImageDraw.Draw(img)
-d.text((px0+4,py1+8),"LICENSEE PHOTO",font=font(CO,19),fill="#666")
-d.text((px0+4,py1+32),"VICE CITY · LEONIDA",font=font(CO,18),fill="#666")
+d.text((px0+4,py1+8),"LICENSEE PHOTO",font=font(CO,19),fill="#555")
+d.text((px0+4,py1+32),"VICE CITY · LEONIDA",font=font(CO,18),fill="#555")
 fx=cx0+336
 def field(x,y,label,value,vf,vfill="#1a1a1a"):
     d.text((x,y),label,font=font(CO,20),fill="#8a8a8a"); d.text((x,y+24),value,font=vf,fill=vfill)
