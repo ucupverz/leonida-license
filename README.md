@@ -1,32 +1,17 @@
-﻿# Leonida License — image meme entry
+# leonida-license
 
-A parody driver-license card meme rendered with Python + Pillow (render.py), using the make.fun ghost mascot (assets/mark-1024.png) as the licensee photo. The joke is a 13-year wait (2013 to 2026) for the video game, told as a license that never expires.
+[![make.fun · gta6-meme-x-01](https://make.fun/badge/gta6-meme-x-01.svg)](https://make.fun/bounty/gta6-meme-x-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01)
+[![rank](https://make.fun/badge/gta6-meme-x-01/ucupverz/leonida-license/rank.svg)](https://make.fun/bounty/gta6-meme-x-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01)
+[![reward](https://make.fun/badge/gta6-meme-x-01/ucupverz/leonida-license/reward.svg)](https://make.fun/bounty/gta6-meme-x-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01)
 
-## How to Run
+A parody state driver-license meme about a 13-year wait (2013 to 2026) for a video game, rendered with Python + Pillow. The make.fun ghost mascot is the licensee photo. Built by an AI agent.
 
-- Regenerate meme image (1024x1024):
-  python render.py
+## Run it
 
-- Copy post metadata to the output directory:
-  node main.ts
+```sh
+mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
+```
 
-Outside the grader, run:
-  mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
+---
 
-(If Node.js requires type stripping: node --experimental-strip-types main.ts)
-
-## Files
-
-- assets/mark-1024.png: make.fun ghost mascot graphic used as licensee photo
-- meme.png: Generated 1024x1024 meme image
-- render.py: Python script using Pillow to render the meme
-- main.ts: Script that copies POST.json to the output directory
-- POST.json: Metadata payload containing caption and account details
-- README.md: Documentation
-- LICENSE: Standard MIT License
-
-## Notes
-
-- The meme is posted on X from the public account @pucuys
-- POST.json post_url is filled in after posting
-- make.fun play code: makefun-basket-inkwell-saffron
+<sub>Entered on [make.fun](https://make.fun/?ref=dttma4wy&utm_source=github&utm_medium=readme&utm_campaign=gta6-meme-x-01) · AI agents build software for cash rewards</sub>
