@@ -1,319 +1,373 @@
 import os
 import random
-import math
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-def create_receipt():
-    # Deterministic seed as specified
-    random.seed(2026)
+# 1. Deterministic seed
+random.seed(2026)
 
-    width = 1024
-    height = 1024
+CANVAS_SIZE = 1024
 
-    # 1. Background gradient
-    # Deep purple (43,16,85) at top-left -> magenta (214,36,159) middle -> warm orange (255,140,66) bottom-right
-    c_purple = (43, 16, 85)
-    c_magenta = (214, 36, 159)
-    c_orange = (255, 140, 66)
+# 2. Diagonal gradient background
+# Deep purple (43,16,85) at top-left -> magenta (214,36,159) middle -> warm orange (255,140,66) bottom-right
+c0 = (43, 16, 85)
+c1 = (214, 36, 159)
+c2 = (255, 140, 66)
 
-    max_diag = 1023 + 1023  # 2046
-    color_table = []
-    for d in range(max_diag + 1):
-        t = d / float(max_diag)
-        if t <= 0.5:
-            f = t * 2.0
-            r = int(c_purple[0] + (c_magenta[0] - c_purple[0]) * f + 0.5)
-            g = int(c_purple[1] + (c_magenta[1] - c_purple[1]) * f + 0.5)
-            b = int(c_purple[2] + (c_magenta[2] - c_purple[2]) * f + 0.5)
-        else:
-            f = (t - 0.5) * 2.0
-            r = int(c_magenta[0] + (c_orange[0] - c_magenta[0]) * f + 0.5)
-            g = int(c_magenta[1] + (c_orange[1] - c_magenta[1]) * f + 0.5)
-            b = int(c_magenta[2] + (c_orange[2] - c_magenta[2]) * f + 0.5)
-        color_table.append((r, g, b))
+lut = []
+max_d = 2046.0
+for d in range(2047):
+    t = d / max_d
+    if t <= 0.5:
+        u = t / 0.5
+        r = int(round((1.0 - u) * c0[0] + u * c1[0]))
+        g = int(round((1.0 - u) * c0[1] + u * c1[1]))
+        b = int(round((1.0 - u) * c0[2] + u * c1[2]))
+    else:
+        u = (t - 0.5) / 0.5
+        r = int(round((1.0 - u) * c1[0] + u * c2[0]))
+        g = int(round((1.0 - u) * c1[1] + u * c2[1]))
+        b = int(round((1.0 - u) * c1[2] + u * c2[2]))
+    lut.append(bytes([r, g, b]))
 
-    buf = bytearray(width * height * 3)
-    idx = 0
-    for y in range(height):
-        for x in range(width):
-            c = color_table[x + y]
-            buf[idx] = c[0]
-            buf[idx + 1] = c[1]
-            buf[idx + 2] = c[2]
-            idx += 3
+raw_bg = b"".join(lut[x + y] for y in range(CANVAS_SIZE) for x in range(CANVAS_SIZE))
+canvas = Image.frombytes("RGB", (CANVAS_SIZE, CANVAS_SIZE), raw_bg)
 
-    bg = Image.frombytes("RGB", (width, height), bytes(buf))
+# 3. Soft blurred dark drop shadow behind the card
+card_box = [56, 40, 968, 984]
+corner_radius = 26
 
-    # Fonts
-    font_arialbd = lambda size: ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", size)
-    font_arial = lambda size: ImageFont.truetype("C:/Windows/Fonts/arial.ttf", size)
-    font_monobd = lambda size: ImageFont.truetype("C:/Windows/Fonts/consolab.ttf", size)
-    font_mono = lambda size: ImageFont.truetype("C:/Windows/Fonts/consola.ttf", size)
+shadow_layer = Image.new("RGBA", (CANVAS_SIZE, CANVAS_SIZE), (0, 0, 0, 0))
+shadow_draw = ImageDraw.Draw(shadow_layer)
+shadow_offset_y = 12
+shadow_draw.rounded_rectangle(
+    [card_box[0] - 2, card_box[1] + shadow_offset_y, card_box[2] + 2, card_box[3] + shadow_offset_y],
+    radius=corner_radius + 2,
+    fill=(15, 5, 25, 120)
+)
+shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=18))
+canvas.paste(shadow_layer, (0, 0), shadow_layer)
 
-    # Helper for letter-spaced text
-    def draw_spaced_text(d, pos, text, font, fill, spacing=3):
-        cur_x, cur_y = pos
-        for ch in text:
-            d.text((cur_x, cur_y), ch, font=font, fill=fill)
-            w = font.getlength(ch)
-            cur_x += w + spacing
+# 4. Fonts from C:/Windows/Fonts
+font_dmv = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 56)
+font_receipt = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 22)
+font_class_lbl = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 14)
+font_class_val = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 42)
 
-    # 2. Card layer
-    card = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(card)
+font_queue_pill = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 18)
+font_take_num = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 17)
 
-    # Base sections of the card
-    # Section 1: Black header bar (64..208)
-    draw.rectangle([64, 64, 960, 208], fill=(20, 20, 20))
+font_date_lbl = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 15)
+font_date_val = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 24)
 
-    # Section 2: Magenta strip (208..254)
-    draw.rectangle([64, 208, 960, 254], fill=(214, 33, 156))
+font_stamp_main = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 50)
+font_stamp_sub = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 22)
 
-    # Section 3: Paper body (254..842)
-    draw.rectangle([64, 254, 960, 842], fill=(255, 253, 247))
+font_check = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 18)
 
-    # Section 4: Magenta footer band (842..960)
-    draw.rectangle([64, 842, 960, 960], fill=(214, 33, 156))
+font_fee = ImageFont.truetype("C:/Windows/Fonts/consolab.ttf", 24)
 
-    # --- Section 1: Black Header Bar Details ---
-    # ID card icon
-    # Rounded rectangle card outline
-    draw.rounded_rectangle([96, 96, 164, 174], radius=7, outline=(255, 255, 255), width=2)
-    # Head circle
-    draw.ellipse([108, 108, 126, 126], fill=(255, 255, 255))
-    # Body arc / shoulders
-    draw.chord([103, 130, 131, 152], start=180, end=0, fill=(255, 255, 255))
-    # Text lines
-    draw.line([(135, 116), (155, 116)], fill=(255, 255, 255), width=2)
-    draw.line([(135, 126), (155, 126)], fill=(255, 209, 102), width=2)  # gold line
-    draw.line([(135, 136), (148, 136)], fill=(255, 255, 255), width=2)
+font_total_lbl = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 42)
+font_total_val = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 62)
 
-    # Header text
-    f_dmv = font_arialbd(55)
-    draw.text((182, 90), "LEONIDA DMV", font=f_dmv, fill=(255, 255, 255))
+font_micro = ImageFont.truetype("C:/Windows/Fonts/consola.ttf", 17)
+font_barcode_cap = ImageFont.truetype("C:/Windows/Fonts/consola.ttf", 14)
+font_clerk = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 15)
 
-    f_sub = font_arialbd(21)
-    draw_spaced_text(draw, (185, 158), "LICENSE RENEWAL RECEIPT", f_sub, fill=(255, 209, 102), spacing=3)
+font_agent_title = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 28)
+font_agent_sub = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 19)
+font_makefun_pill = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 26)
 
-    # Class label and value on right
-    f_class_lbl = font_arial(13)
-    f_class_val = font_arialbd(40)
-    class_val_str = "V \u2192 VI"
-    val_w = f_class_val.getlength(class_val_str)
-    draw.text((920 - val_w, 118), class_val_str, font=f_class_val, fill=(255, 255, 255))
+# 5. Build card surface (RGBA)
+card_img = Image.new("RGBA", (CANVAS_SIZE, CANVAS_SIZE), (0, 0, 0, 0))
+card_draw = ImageDraw.Draw(card_img)
 
-    lbl_w = f_class_lbl.getlength("CLASS")
-    draw.text((920 - lbl_w, 98), "CLASS", font=f_class_lbl, fill=(160, 160, 160))
+# Cream paper fill: (255, 253, 247)
+card_draw.rectangle([56, 40, 968, 984], fill=(255, 253, 247, 255))
 
-    # --- Section 2: Magenta Strip Details ---
-    # White rounded pill: "NOW SERVING #2013"
-    f_pill = font_arialbd(15)
-    pill_text = "NOW SERVING #2013"
-    pill_text_w = f_pill.getlength(pill_text)
-    pill_pad_x = 14
-    pill_w = pill_text_w + pill_pad_x * 2
-    draw.rounded_rectangle([96, 217, 96 + pill_w, 245], radius=14, fill=(255, 255, 255))
-    draw.text((96 + pill_pad_x, 222), pill_text, font=f_pill, fill=(214, 33, 156))
+# Header zone 1: Black bar (y 40..176), fill (20,20,20)
+card_draw.rectangle([56, 40, 968, 176], fill=(20, 20, 20, 255))
 
-    # Right: "TAKE A NUMBER" letter-spaced
-    f_tan = font_arialbd(14)
-    tan_text = "TAKE A NUMBER"
-    tan_spacing = 2
-    tan_w = sum(f_tan.getlength(c) + tan_spacing for c in tan_text) - tan_spacing
-    draw_spaced_text(draw, (920 - tan_w, 223), tan_text, f_tan, fill=(255, 255, 255), spacing=tan_spacing)
+# Queue zone 2: Magenta strip (y 176..228), fill (214,33,156)
+card_draw.rectangle([56, 176, 968, 228], fill=(214, 33, 156, 255))
 
-    # --- Section 3: White Paper Body Details ---
-    # SUBMITTED label + value
-    f_meta_lbl = font_arialbd(12)
-    f_meta_val = font_arialbd(21)
-    draw_spaced_text(draw, (96, 274), "SUBMITTED", f_meta_lbl, fill=(130, 130, 135), spacing=1)
-    draw.text((96, 292), "LOS SANTOS \u00b7 SEP 17, 2013", font=f_meta_val, fill=(18, 18, 20))
+# Footer zone 4: Magenta footer band (y 852..984), fill (214,33,156)
+card_draw.rectangle([56, 852, 968, 984], fill=(214, 33, 156, 255))
 
-    # PROCESSED label + value
-    draw_spaced_text(draw, (96, 328), "PROCESSED", f_meta_lbl, fill=(130, 130, 135), spacing=1)
-    draw.text((96, 346), "VICE CITY \u00b7 NOV 19, 2026", font=f_meta_val, fill=(18, 18, 20))
+# --- HEADER BAR CONTENT ---
+# Left ID-card icon
+icon_x = 82
+icon_y = 66
+icon_w = 52
+icon_h = 36
+card_draw.rounded_rectangle(
+    [icon_x, icon_y, icon_x + icon_w, icon_y + icon_h],
+    radius=5,
+    outline=(255, 255, 255, 255),
+    width=2
+)
+# Mini photo box on left of ID card
+card_draw.rectangle([icon_x + 5, icon_y + 5, icon_x + 17, icon_y + 23], outline=(200, 200, 200, 255), width=1)
+card_draw.ellipse([icon_x + 8, icon_y + 8, icon_x + 14, icon_y + 14], fill=(255, 255, 255, 255))
+card_draw.pieslice([icon_x + 6, icon_y + 14, icon_x + 16, icon_y + 23], 180, 360, fill=(255, 255, 255, 255))
 
-    # Checkbox row
-    f_chk = font_arialbd(14)
-    draw.text((96, 388), "FILED AS:", font=f_chk, fill=(130, 130, 135))
+# Text lines on right of ID card (one gold)
+card_draw.line([(icon_x + 22, icon_y + 9), (icon_x + 44, icon_y + 9)], fill=(255, 209, 102, 255), width=2)
+card_draw.line([(icon_x + 22, icon_y + 15), (icon_x + 42, icon_y + 15)], fill=(255, 255, 255, 255), width=2)
+card_draw.line([(icon_x + 22, icon_y + 21), (icon_x + 38, icon_y + 21)], fill=(255, 255, 255, 255), width=2)
+card_draw.line([(icon_x + 5, icon_y + 29), (icon_x + 44, icon_y + 29)], fill=(160, 160, 160, 255), width=2)
 
-    # Empty box "ON TIME"
-    draw.rectangle([186, 388, 202, 404], outline=(150, 150, 155), width=2)
-    draw.text((210, 388), "ON TIME", font=f_chk, fill=(140, 140, 145))
+# Title: "LEONIDA DMV"
+card_draw.text((150, 52), "LEONIDA DMV", font=font_dmv, fill=(255, 255, 255, 255))
 
-    # Checked box "LATE RETURN"
-    draw.rectangle([300, 388, 316, 404], outline=(226, 59, 46), width=2)
-    draw.line([(303, 396), (307, 401)], fill=(226, 59, 46), width=2)
-    draw.line([(307, 401), (314, 391)], fill=(226, 59, 46), width=2)
-    draw.text((324, 388), "LATE RETURN", font=f_chk, fill=(226, 59, 46))
+# Subtitle: "LICENSE RENEWAL RECEIPT" in gold (255,209,102), letter-spaced ~3px
+cur_sub_x = 152
+sub_text = "LICENSE RENEWAL RECEIPT"
+for ch in sub_text:
+    card_draw.text((cur_sub_x, 126), ch, font=font_receipt, fill=(255, 209, 102, 255))
+    bb = card_draw.textbbox((0, 0), ch, font=font_receipt)
+    cur_sub_x += (bb[2] - bb[0]) + 3
 
-    # Red rubber stamp overlapping upper-right of body
-    stamp_w, stamp_h = 390, 135
-    stamp_img = Image.new("RGBA", (stamp_w, stamp_h), (0, 0, 0, 0))
-    stamp_draw = ImageDraw.Draw(stamp_img)
-    stamp_red = (226, 59, 46)
+# Right side: CLASS label above V → VI
+class_val_text = "V → VI"
+val_bbox = card_draw.textbbox((0, 0), class_val_text, font=font_class_val)
+val_w = val_bbox[2] - val_bbox[0]
+val_x = 924 - val_w
+val_y = 86
+card_draw.text((val_x, val_y), class_val_text, font=font_class_val, fill=(255, 255, 255, 255))
 
-    # Double border
-    stamp_draw.rounded_rectangle([4, 4, stamp_w - 4, stamp_h - 4], radius=15, outline=stamp_red, width=4)
-    stamp_draw.rounded_rectangle([13, 13, stamp_w - 13, stamp_h - 13], radius=10, outline=stamp_red, width=2)
+lbl_bbox = card_draw.textbbox((0, 0), "CLASS", font=font_class_lbl)
+lbl_w = lbl_bbox[2] - lbl_bbox[0]
+lbl_x = 924 - lbl_w
+lbl_y = 66
+card_draw.text((lbl_x, lbl_y), "CLASS", font=font_class_lbl, fill=(180, 180, 185, 255))
 
-    # Stamp text
-    f_stamp_hdr = font_arialbd(48)
-    f_stamp_sub = font_arialbd(20)
+# --- QUEUE STRIP CONTENT ---
+# Left: white rounded pill containing "NOW SERVING #2013" in magenta bold ~18px
+pill_text = "NOW SERVING #2013"
+pt_bbox = card_draw.textbbox((0, 0), pill_text, font=font_queue_pill)
+pt_w = pt_bbox[2] - pt_bbox[0]
+pt_h = pt_bbox[3] - pt_bbox[1]
+pill_pad_x = 18
+pill_w = pt_w + pill_pad_x * 2
+pill_h = 36
+pill_x = 88
+pill_y = 176 + (52 - pill_h) // 2
+card_draw.rounded_rectangle(
+    [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+    radius=pill_h // 2,
+    fill=(255, 255, 255, 255)
+)
+card_draw.text(
+    (pill_x + pill_pad_x, pill_y + (pill_h - pt_h) // 2 - pt_bbox[1]),
+    pill_text,
+    font=font_queue_pill,
+    fill=(214, 33, 156, 255)
+)
 
-    t1 = "13 YEARS LATE"
-    w_t1 = f_stamp_hdr.getlength(t1)
-    stamp_draw.text(((stamp_w - w_t1) / 2, 22), t1, font=f_stamp_hdr, fill=stamp_red)
+# Right: "TAKE A NUMBER" in white bold ~17px, letter-spaced ~2px
+take_text = "TAKE A NUMBER"
+tn_widths = []
+for ch in take_text:
+    bb = card_draw.textbbox((0, 0), ch, font=font_take_num)
+    tn_widths.append(bb[2] - bb[0])
+total_tn_w = sum(tn_widths) + (len(take_text) - 1) * 2
+cur_tn_x = 924 - total_tn_w
+tn_y = 176 + (52 - 17) // 2
+for i, ch in enumerate(take_text):
+    card_draw.text((cur_tn_x, tn_y), ch, font=font_take_num, fill=(255, 255, 255, 255))
+    cur_tn_x += tn_widths[i] + 2
 
-    t2 = "4,811 DAYS IN QUEUE"
-    w_t2 = f_stamp_sub.getlength(t2)
-    stamp_draw.text(((stamp_w - w_t2) / 2, 82), t2, font=f_stamp_sub, fill=stamp_red)
+# --- WHITE PAPER BODY (y 228..852) ---
+# Date blocks on left half
+# SUBMITTED label + LOS SANTOS · SEP 17, 2013
+cur_sub_lbl_x = 88
+for ch in "SUBMITTED":
+    card_draw.text((cur_sub_lbl_x, 246), ch, font=font_date_lbl, fill=(88, 88, 92, 255))
+    bb = card_draw.textbbox((0, 0), ch, font=font_date_lbl)
+    cur_sub_lbl_x += (bb[2] - bb[0]) + 3
 
-    # Light distressed texture
-    stamp_pix = stamp_img.load()
-    for sy in range(stamp_h):
-        for sx in range(stamp_w):
-            r, g, b, a = stamp_pix[sx, sy]
-            if a > 0:
-                rv = random.random()
-                if rv < 0.08:
-                    stamp_pix[sx, sy] = (r, g, b, 0)
-                elif rv < 0.22:
-                    stamp_pix[sx, sy] = (r, g, b, int(a * 0.45))
-                elif rv < 0.35:
-                    stamp_pix[sx, sy] = (r, g, b, int(a * 0.75))
+card_draw.text((88, 268), "LOS SANTOS · SEP 17, 2013", font=font_date_val, fill=(18, 18, 20, 255))
 
-    stamp_rot = stamp_img.rotate(-8, resample=Image.BICUBIC, expand=True)
-    card.alpha_composite(stamp_rot, (530, 260))
+# PROCESSED label + VICE CITY · NOV 19, 2026
+cur_proc_lbl_x = 88
+for ch in "PROCESSED":
+    card_draw.text((cur_proc_lbl_x, 304), ch, font=font_date_lbl, fill=(88, 88, 92, 255))
+    bb = card_draw.textbbox((0, 0), ch, font=font_date_lbl)
+    cur_proc_lbl_x += (bb[2] - bb[0]) + 3
 
-    # Divider line
-    draw.line([(96, 428), (920, 428)], fill=(220, 220, 225), width=1)
+card_draw.text((88, 326), "VICE CITY · NOV 19, 2026", font=font_date_val, fill=(18, 18, 20, 255))
 
-    # Six itemized fee lines
-    fee_lines = [
-        ("Late renewal \u2014 13 years @ $100/yr", "$1,300"),
-        ("Two delays: Fall 2025, May 2026", "$52"),
-        ("Road test: in line since 2013", "$213"),
-        ("Photo retake: subject aged 13 yrs", "$137"),
-        ("Class upgrade: V \u2192 VI", "$224"),
-        ("Address: Los Santos \u2192 Vice City", "$100"),
-    ]
+# Red rubber stamp on upper-RIGHT
+stamp_w, stamp_h = 390, 118
+stamp_img = Image.new("RGBA", (stamp_w, stamp_h), (0, 0, 0, 0))
+sdraw = ImageDraw.Draw(stamp_img)
 
-    f_fee = font_monobd(22)
-    start_y = 448
-    spacing_y = 35
+# Double border in red (226,59,46)
+sdraw.rounded_rectangle([4, 4, stamp_w - 4, stamp_h - 4], radius=14, outline=(226, 59, 46, 255), width=4)
+sdraw.rounded_rectangle([12, 12, stamp_w - 12, stamp_h - 12], radius=10, outline=(226, 59, 46, 255), width=2)
 
-    for i, (desc, price) in enumerate(fee_lines):
-        line_y = start_y + i * spacing_y
-        draw.text((96, line_y), desc, font=f_fee, fill=(18, 18, 20))
+st_main = "13 YEARS LATE"
+bb_m = sdraw.textbbox((0, 0), st_main, font=font_stamp_main)
+sdraw.text(((stamp_w - (bb_m[2] - bb_m[0])) // 2, 16), st_main, font=font_stamp_main, fill=(226, 59, 46, 255))
 
-        pw = f_fee.getlength(price)
-        px = 920 - pw
-        draw.text((px, line_y), price, font=f_fee, fill=(18, 18, 20))
+st_sub = "4,811 DAYS IN QUEUE"
+bb_s = sdraw.textbbox((0, 0), st_sub, font=font_stamp_sub)
+sdraw.text(((stamp_w - (bb_s[2] - bb_s[0])) // 2, 74), st_sub, font=font_stamp_sub, fill=(226, 59, 46, 255))
 
-        # Dotted leader lines: 2px squares every 8px
-        desc_w = f_fee.getlength(desc)
-        dot_start = int(96 + desc_w + 12)
-        dot_end = int(px - 10)
-        dot_y = line_y + 15
-        for dx in range(dot_start, dot_end, 8):
-            draw.rectangle([dx, dot_y, dx + 2, dot_y + 2], fill=(160, 160, 165))
+# Light distressed texture
+stamp_pixels = stamp_img.load()
+for sy in range(stamp_h):
+    for sx in range(stamp_w):
+        r, g, b, a = stamp_pixels[sx, sy]
+        if a > 0:
+            rnd = random.random()
+            if rnd < 0.05:
+                stamp_pixels[sx, sy] = (r, g, b, 0)
+            elif rnd < 0.12:
+                stamp_pixels[sx, sy] = (r, g, b, int(a * random.uniform(0.2, 0.6)))
 
-    # Magenta horizontal rule (~4px thick)
-    draw.line([(96, 664), (920, 664)], fill=(214, 33, 156), width=4)
+# Rotate about -8 degrees
+rotated_stamp = stamp_img.rotate(-8, resample=Image.Resampling.BICUBIC, expand=True)
+card_img.paste(rotated_stamp, (530, 236), rotated_stamp)
 
-    # TOTAL DUE row
-    f_total_lbl = font_arialbd(40)
-    f_total_val = font_arialbd(64)
-    draw.text((96, 696), "TOTAL DUE", font=f_total_lbl, fill=(27, 42, 74))
+# Checkbox row below dates (y ~ 372)
+card_draw.text((88, 372), "FILED AS:", font=font_check, fill=(88, 88, 92, 255))
 
-    val_str = "$2,026"
-    val_w = f_total_val.getlength(val_str)
-    draw.text((920 - val_w, 674), val_str, font=f_total_val, fill=(214, 33, 156))
+# Empty box labeled "ON TIME"
+card_draw.rounded_rectangle([186, 372, 206, 392], radius=3, outline=(88, 88, 92, 255), width=2)
+card_draw.text((214, 372), "ON TIME", font=font_check, fill=(88, 88, 92, 255))
 
-    # Microprint line
-    f_micro = font_mono(13)
-    micro_text = "Form VI-13 \u00b7 examiners Jason & Lucia \u00b7 214 GB download required \u00b7 no refunds \u00b7 PC version pending"
-    micro_w = f_micro.getlength(micro_text)
-    draw.text(((width - micro_w) / 2, 752), micro_text, font=f_micro, fill=(110, 110, 110))
+# Checked box labeled "LATE RETURN" in red (226,59,46)
+card_draw.rounded_rectangle([320, 372, 340, 392], radius=3, outline=(226, 59, 46, 255), width=2)
+# Draw thick red checkmark
+card_draw.line([(323, 381), (328, 388), (338, 371)], fill=(226, 59, 46, 255), width=3)
+card_draw.text((348, 372), "LATE RETURN", font=font_check, fill=(226, 59, 46, 255))
 
-    # Barcode at lower-left
-    bar_widths = [3, 1, 2, 1, 4, 2, 1, 3, 2, 1, 1, 3, 2, 4, 1, 2, 3, 1, 2, 2, 1, 3, 1, 4, 2, 1, 3, 2, 1, 2, 3, 1, 1, 4, 2, 1, 3, 2]
-    bar_gaps   = [2, 1, 2, 3, 1, 2, 2, 1, 3, 2, 1, 2, 1, 3, 2, 1, 2, 3, 1, 2, 1, 2, 3, 1, 2, 2, 1, 3, 2, 1, 2, 1, 3, 2, 1, 2, 1, 2]
+# Thin light divider line
+card_draw.line([(88, 408), (924, 408)], fill=(220, 220, 224, 255), width=1)
 
-    bx = 96
-    for bw, bgap in zip(bar_widths, bar_gaps):
-        draw.rectangle([bx, 772, bx + bw, 808], fill=(20, 20, 20))
-        bx += bw + bgap
+# SIX itemized fee lines
+fee_items = [
+    ("Late renewal \u2014 13 years @ $100/yr", "$1,300"),
+    ("Two delays: Fall 2025, May 2026", "$52"),
+    ("Road test: in line since 2013", "$213"),
+    ("Photo retake: subject aged 13 yrs", "$137"),
+    ("Class upgrade: V \u2192 VI", "$224"),
+    ("Address: Los Santos \u2192 Vice City", "$100")
+]
 
-    f_barcode_cap = font_mono(11)
-    draw.text((96, 814), "* 2013-2026-LEONIDA-DMV-VI *", font=f_barcode_cap, fill=(120, 120, 120))
+fee_start_y = 428
+line_spacing = 40
+for idx, (desc, price) in enumerate(fee_items):
+    y = fee_start_y + idx * line_spacing
+    desc_bbox = card_draw.textbbox((88, y), desc, font=font_fee)
+    price_bbox = card_draw.textbbox((0, 0), price, font=font_fee)
+    price_w = price_bbox[2] - price_bbox[0]
+    price_x = 924 - price_w
 
-    # Signature line at lower-right
-    draw.line([(680, 808), (920, 808)], fill=(180, 180, 185), width=1)
+    card_draw.text((88, y), desc, font=font_fee, fill=(18, 18, 20, 255))
+    card_draw.text((price_x, y), price, font=font_fee, fill=(18, 18, 20, 255))
 
-    # Scrawl signature
-    scrawl_points = [
-        (700, 802), (712, 788), (722, 778), (728, 796), (734, 802),
-        (744, 786), (754, 782), (760, 800), (772, 788), (784, 785),
-        (796, 802), (802, 792), (814, 780), (822, 778), (828, 800),
-        (836, 802), (850, 794), (866, 792), (886, 790), (902, 788), (914, 798)
-    ]
-    for i in range(len(scrawl_points) - 1):
-        draw.line([scrawl_points[i], scrawl_points[i + 1]], fill=(27, 42, 74), width=2)
+    # Dotted leaders: 2px squares every 8px
+    dot_start = desc_bbox[2] + 10
+    dot_end = price_x - 10
+    dot_y = y + 15
+    for dx in range(dot_start, dot_end, 8):
+        card_draw.rectangle([dx, dot_y, dx + 2, dot_y + 2], fill=(18, 18, 20, 255))
 
-    f_clerk = font_arial(13)
-    draw.text((680, 814), "Clerk: make.fun agent", font=f_clerk, fill=(120, 120, 120))
+# Magenta horizontal rule (~4px thick)
+card_draw.line([(88, 674), (924, 674)], fill=(214, 33, 156, 255), width=4)
 
-    # --- Section 4: Magenta Footer Band Details ---
-    # Mascot on left
-    mascot_path = "assets/mark-1024.png"
-    if os.path.exists(mascot_path):
-        mascot = Image.open(mascot_path).convert("RGBA")
-        mascot = mascot.resize((92, 92), Image.LANCZOS)
-        card.alpha_composite(mascot, (96, 855))
+# TOTAL DUE and $2,026
+card_draw.text((88, 692), "TOTAL DUE", font=font_total_lbl, fill=(27, 42, 74, 255))
 
-    f_foot_hdr = font_arialbd(26)
-    f_foot_sub = font_arial(17)
-    draw.text((206, 864), "PAID BY MY AI AGENT", font=f_foot_hdr, fill=(255, 255, 255))
-    draw.text((206, 902), "with a bounty payout it earned on", font=f_foot_sub, fill=(255, 255, 255))
+tot_bbox = card_draw.textbbox((0, 0), "$2,026", font=font_total_val)
+tot_w = tot_bbox[2] - tot_bbox[0]
+tot_x = 924 - tot_w
+card_draw.text((tot_x, 678), "$2,026", font=font_total_val, fill=(214, 33, 156, 255))
 
-    # White pill with make.fun on right
-    pill_mf_w = 160
-    pill_mf_h = 48
-    pill_mf_x1 = 920 - pill_mf_w
-    pill_mf_y1 = 878
-    draw.rounded_rectangle([pill_mf_x1, pill_mf_y1, 920, pill_mf_y1 + pill_mf_h], radius=24, fill=(255, 255, 255))
+# Microprint line
+micro_text = "Form VI-13 \u00b7 examiners Jason & Lucia \u00b7 214 GB download \u00b7 no refunds \u00b7 PC version pending"
+mp_bbox = card_draw.textbbox((0, 0), micro_text, font=font_micro)
+mp_w = mp_bbox[2] - mp_bbox[0]
+card_draw.text(((CANVAS_SIZE - mp_w) // 2, 756), micro_text, font=font_micro, fill=(70, 70, 74, 255))
 
-    f_mf = font_arialbd(24)
-    mf_text = "make.fun"
-    mf_w = f_mf.getlength(mf_text)
-    draw.text((pill_mf_x1 + (pill_mf_w - mf_w) / 2, pill_mf_y1 + 10), mf_text, font=f_mf, fill=(214, 33, 156))
+# Barcode at lower-left
+bc_x = 88
+bc_y = 786
+bc_h = 36
+bar_widths = [3, 2, 1, 2, 4, 1, 2, 3, 1, 2, 4, 2, 1, 3, 2, 1, 4, 2, 2, 1, 3, 2, 1, 3, 4, 1, 2, 3, 1, 2, 4, 1, 2, 3, 2, 1, 4, 2, 1, 3, 2, 1, 3, 2, 4, 1, 2, 3, 1, 4, 2, 1, 3, 2]
+cur_bc_x = bc_x
+for b_idx, bw in enumerate(bar_widths):
+    if b_idx % 2 == 0:
+        card_draw.rectangle([cur_bc_x, bc_y, cur_bc_x + bw, bc_y + bc_h], fill=(18, 18, 20, 255))
+    cur_bc_x += bw
 
-    # 3. Soft blurred dark drop shadow
-    shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rounded_rectangle([64, 74, 960, 970], radius=28, fill=(0, 0, 0, 150))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=18))
+card_draw.text((88, 828), "* 2013-2026-LEONIDA-DMV-VI *", font=font_barcode_cap, fill=(70, 70, 74, 255))
 
-    # 4. Rounded corner mask for the card
-    mask = Image.new("L", (width, height), 0)
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.rounded_rectangle([64, 64, 960, 960], radius=28, fill=255)
+# Signature line at lower-right
+sig_x1 = 700
+sig_x2 = 924
+sig_y = 824
+card_draw.line([(sig_x1, sig_y), (sig_x2, sig_y)], fill=(160, 160, 165, 255), width=2)
 
-    # 5. Composite card over gradient
-    final_canvas = bg.copy().convert("RGBA")
-    final_canvas.alpha_composite(shadow)
-    final_canvas.paste(card, (0, 0), mask)
+# Hand-drawn navy scrawl
+sig_points = [
+    (710, 814), (722, 794), (728, 818), (738, 802),
+    (752, 816), (766, 792), (778, 820), (792, 806),
+    (812, 816), (826, 796), (842, 818), (866, 804),
+    (892, 816), (918, 808)
+]
+card_draw.line(sig_points, fill=(27, 42, 74, 255), width=2, joint="curve")
+card_draw.arc([712, 790, 736, 814], 180, 360, fill=(27, 42, 74, 255), width=2)
 
-    final_rgb = final_canvas.convert("RGB")
-    final_rgb.save("meme.png", "PNG")
-    print("Saved meme.png (1024x1024)")
+card_draw.text((sig_x1, 828), "Clerk: make.fun agent", font=font_clerk, fill=(70, 70, 74, 255))
 
-    # Downscaled 480x480 version
-    img_480 = final_rgb.resize((480, 480), Image.LANCZOS)
-    img_480.save("meme_480.png", "PNG")
-    print("Saved meme_480.png (480x480)")
+# --- FOOTER BAND (y 852..984) ---
+# Left: ghost mascot
+ghost_path = "assets/mark-1024.png"
+if os.path.exists(ghost_path):
+    ghost = Image.open(ghost_path).convert("RGBA")
+    ghost = ghost.resize((96, 96), Image.Resampling.LANCZOS)
+    card_img.paste(ghost, (80, 870), ghost)
 
-if __name__ == "__main__":
-    create_receipt()
+card_draw.text((192, 880), "PAID BY MY AI AGENT", font=font_agent_title, fill=(255, 255, 255, 255))
+card_draw.text((192, 920), "with a bounty payout it earned on", font=font_agent_sub, fill=(255, 255, 255, 255))
+
+# Right: make.fun pill
+mf_pill_w = 160
+mf_pill_h = 48
+mf_pill_x = 924 - mf_pill_w
+mf_pill_y = 892
+card_draw.rounded_rectangle(
+    [mf_pill_x, mf_pill_y, mf_pill_x + mf_pill_w, mf_pill_y + mf_pill_h],
+    radius=mf_pill_h // 2,
+    fill=(255, 255, 255, 255)
+)
+mf_text = "make.fun"
+mf_bb = card_draw.textbbox((0, 0), mf_text, font=font_makefun_pill)
+mf_w = mf_bb[2] - mf_bb[0]
+mf_h = mf_bb[3] - mf_bb[1]
+card_draw.text(
+    (mf_pill_x + (mf_pill_w - mf_w) // 2, mf_pill_y + (mf_pill_h - mf_h) // 2 - mf_bb[1]),
+    mf_text,
+    font=font_makefun_pill,
+    fill=(214, 33, 156, 255)
+)
+
+# 6. Rounded mask composite over gradient
+mask = Image.new("L", (CANVAS_SIZE, CANVAS_SIZE), 0)
+mask_draw = ImageDraw.Draw(mask)
+mask_draw.rounded_rectangle(card_box, radius=corner_radius, fill=255)
+
+canvas.paste(card_img, (0, 0), mask)
+
+# 7. Save outputs
+output_path = "meme.png"
+canvas.save(output_path, "PNG")
+
+output_480_path = "meme_480.png"
+img_480 = canvas.resize((480, 480), Image.Resampling.LANCZOS)
+img_480.save(output_480_path, "PNG")
+
+print(f"Successfully generated {output_path} (1024x1024) and {output_480_path} (480x480).")
