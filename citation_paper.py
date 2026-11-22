@@ -191,7 +191,7 @@ def make_paper() -> Image.Image:
     # Red distressed stamp, centered across the sheet.
     stamp = Image.new("RGBA", (620, 146), (0, 0, 0, 0))
     stamp_draw = ImageDraw.Draw(stamp)
-    stamp_draw.rounded_rectangle((4, 4, 616, 142), radius=14, outline=RED + (255,), width=6)
+    stamp_draw.rounded_rectangle((4, 4, 616, 142), radius=14, outline=RED + (255,), width=7)
     stamp_draw.rounded_rectangle((15, 15, 605, 131), radius=9, outline=RED + (255,), width=3)
     stamp_text = "13 YEARS UNPAID"
     stamp_face = fitting_font(stamp_draw, stamp_text, "arialbd.ttf", 70, 560)
@@ -201,16 +201,16 @@ def make_paper() -> Image.Image:
     stamp_draw.text((stamp_x, stamp_y), stamp_text, font=stamp_face, fill=RED + (255,))
     stamp_arr = np.asarray(stamp).copy()
     alpha = stamp_arr[:, :, 3]
-    distress = np.random.default_rng().random(alpha.shape) < 0.16
+    distress = np.random.default_rng().random(alpha.shape) < 0.22
     factors = np.random.default_rng().uniform(0.05, 0.5, alpha.shape)
     alpha[distress] = (alpha[distress].astype(np.float32) * factors[distress]).astype(np.uint8)
     stamp_arr[:, :, 3] = alpha
-    stamp = Image.fromarray(stamp_arr, "RGBA").rotate(-7, resample=Image.Resampling.BICUBIC, expand=True)
+    stamp = Image.fromarray(stamp_arr, "RGBA").rotate(-5.5, resample=Image.Resampling.BICUBIC, expand=True)
     stamp_x = (PAPER_W - stamp.width) // 2
     paper_rgba = paper.convert("RGBA")
     paper_rgba.alpha_composite(stamp, (stamp_x, cursor))
     record("rubber stamp", (stamp_x, cursor, stamp_x + stamp.width, cursor + stamp.height))
-    cursor += stamp.height + 18
+    cursor += stamp.height + 40
 
     punch = "THE CAR NEVER MOVED."
     punch_face = fitting_font(draw, punch, "arialbd.ttf", 72, inner)
@@ -219,7 +219,7 @@ def make_paper() -> Image.Image:
 
     kicker = "PARKED THE DAY GTA V CAME OUT."
     kicker_face = fitting_font(draw, kicker, "arialbd.ttf", 34, inner)
-    text("kicker", (x0, cursor), kicker, kicker_face, MAGENTA)
+    text("kicker", (x0, cursor), kicker, kicker_face, (198, 26, 132))
     cursor += 52
 
     rule("footer divider", cursor, 2)
