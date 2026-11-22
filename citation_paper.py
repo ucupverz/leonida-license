@@ -1,236 +1,289 @@
-"""Render the Vice City citation as a phone photo of real paper.
+from __future__ import annotations
 
-The two entries scoring 903832 read as photographs of a physical document: cream
-paper in every corner, 10-16% ink, low saturation. A neon poster scored 866854.
-So this builds paper, ink and camera artefacts instead of a floating card.
+import math
+import random
+from pathlib import Path
 
-Layout flows from one y-cursor; every block reserves its height and a collision
-assertion runs before the image is written, so a crowded frame fails the build.
-"""
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
+
 
 W, H = 1024, 1280
-PW, PH = 900, 1210
-rng = np.random.default_rng(2026)
-BOXES = []
-INK, GREY, RED, MG = (24, 23, 26), (108, 104, 100), (176, 34, 30), (198, 26, 132)
-M = 66
-INNER = PW - 2 * M
+PAPER_W, PAPER_H = 900, 1210
+MARGIN = 66
+INK = (24, 23, 26)
+GREY = (108, 104, 100)
+RED = (176, 34, 30)
+MAGENTA = (198, 26, 132)
+ROOT = Path(__file__).resolve().parent
 
 
-def fnt(size, style="bold"):
-    name = {"bold": "arialbd.ttf", "reg": "arial.ttf", "mono": "consolab.ttf",
-            "monor": "consola.ttf"}[style]
-    return ImageFont.truetype("C:/Windows/Fonts/" + name, size)
+def font(name: str, size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(str(Path("C:/Windows/Fonts") / name), size)
 
 
-def fit(draw, text, style, max_w, start, floor=16):
-    """Largest size that keeps text inside max_w."""
+def fitting_font(draw: ImageDraw.ImageDraw, text: str, name: str, start: int, max_width: int) -> ImageFont.FreeTypeFont:
     size = start
-    while size > floor:
-        f = fnt(size, style)
-        bb = draw.textbbox((0, 0), text, font=f)
-        if bb[2] - bb[0] <= max_w:
-            return f, bb
-        size -= 2
-    f = fnt(floor, style)
-    return f, draw.textbbox((0, 0), text, font=f)
+    while size > 16:
+        candidate = font(name, size)
+        if draw.textbbox((0, 0), text, font=candidate)[2] <= max_width:
+            return candidate
+        size -= 1
+    candidate = font(name, 16)
+    if draw.textbbox((0, 0), text, font=candidate)[2] > max_width:
+        raise SystemExit(f"text does not fit at 16 px: {text}")
+    return candidate
 
 
-def box(tag, x0, y0, x1, y1):
-    BOXES.append((tag, x0, y0, x1, y1))
+def tracked_text(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str,
+                 face: ImageFont.FreeTypeFont, fill: tuple[int, ...], extra: int = 3) -> tuple[int, int, int, int]:
+    x, y = xy
+    start = x
+    for char in text:
+        draw.text((x, y), char, font=face, fill=fill)
+        x += draw.textlength(char, font=face) + extra
+    return (start, y, int(x - extra), y + face.size + 4)
 
 
-def check_boxes():
-    bad = []
-    for i in range(len(BOXES)):
-        for j in range(i + 1, len(BOXES)):
-            a, b = BOXES[i], BOXES[j]
-            if a[1] < b[3] and b[1] < a[3] and a[2] < b[4] and b[2] < a[4]:
-                bad.append(f"{a[0]} x {b[0]}")
-    if bad:
-        raise SystemExit("LAYOUT COLLISION: " + ", ".join(bad))
+def make_background() -> Image.Image:
+    rng = np.random.default_rng()
+    low = rng.normal(0, 1, (80, 64)).astype(np.float32)
+    low = ((low - low.min()) / max(float(np.ptp(low)), 1e-6) * 255).astype(np.uint8)
+    texture = Image.fromarray(low, "L").filter(ImageFilter.GaussianBlur(1.2)).resize((W, H), Image.Resampling.BICUBIC)
+    noise = np.asarray(texture, dtype=np.float32) * 26.0 / 255.0
+    base = np.empty((H, W, 3), dtype=np.float32)
+    base[:] = (30, 28, 34)
+    base += noise[:, :, None]
+    yy, xx = np.mgrid[0:H, 0:W]
+    for cx, cy, radius, color in ((60, 300, 620, (236, 62, 148)), (980, 1080, 560, (56, 190, 214))):
+        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        falloff = np.clip(1.0 - dist / radius, 0.0, 1.0) ** 2.4
+        base += falloff[:, :, None] * np.asarray(color, dtype=np.float32) * 0.42
+    bg = Image.fromarray(np.uint8(np.clip(base, 0, 255)), "RGB")
+
+    spots = Image.new("L", (W, H), 0)
+    sd = ImageDraw.Draw(spots)
+    random.seed()
+    for _ in range(26):
+        x, y = random.randrange(W), random.randrange(H)
+        radius = random.randint(6, 22)
+        sd.ellipse((x - radius, y - radius, x + radius, y + radius), fill=random.randint(100, 230))
+    spots = spots.filter(ImageFilter.GaussianBlur(13))
+    mask = np.asarray(spots, dtype=np.float32)[:, :, None] / 255.0 * 0.30
+    mag = np.asarray((236, 62, 148), dtype=np.float32)
+    cyan = np.asarray((56, 190, 214), dtype=np.float32)
+    tint = 0.60 * mag + 0.40 * cyan
+    arr = np.asarray(bg, dtype=np.float32) + mask * tint
+
+    radial = np.sqrt(((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2)
+    vignette = np.clip(1.0 - 0.42 * np.minimum(radial ** 2 / 2.0, 1.0), 0.0, 1.0)
+    arr *= vignette[:, :, None]
+    return Image.fromarray(np.uint8(np.clip(arr, 0, 255)), "RGB")
 
 
-# ---------------------------------------------------------------- wet asphalt
-yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-base = np.zeros((H, W, 3), np.float32)
-base[..., 0], base[..., 1], base[..., 2] = 30, 28, 34
-coarse = rng.normal(0, 1, (H // 8, W // 8, 3)).astype(np.float32)
-coarse = ((coarse - coarse.min()) / (np.ptp(coarse) + 1e-6) * 255).astype(np.uint8)
-coarse = np.asarray(Image.fromarray(coarse).filter(ImageFilter.GaussianBlur(2))
-                    .resize((W, H), Image.Resampling.BICUBIC), np.float32)
-base += (coarse / 255.0 - 0.5) * 26
-for cx, cy, rad, col in ((60, 300, 620, (236, 62, 148)), (980, 1080, 560, (56, 190, 214))):
-    glow = np.clip(1.0 - np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / rad, 0, 1) ** 2.4
-    for i in range(3):
-        base[..., i] += glow * col[i] * 0.42
-for _ in range(26):                                   # wet-pavement bokeh
-    bx, by, r = rng.integers(0, W), rng.integers(0, H), rng.integers(6, 22)
-    layer = Image.new("L", (W, H), 0)
-    ImageDraw.Draw(layer).ellipse([bx - r, by - r, bx + r, by + r], fill=int(rng.integers(30, 90)))
-    tint = np.array([236, 62, 148] if rng.random() < 0.6 else [56, 190, 214], np.float32)
-    base += (np.asarray(layer.filter(ImageFilter.GaussianBlur(6)), np.float32)[..., None] / 255.0) * tint * 0.30
-base *= (1.0 - 0.42 * (((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2) / 2)[..., None]
-surface = Image.fromarray(np.clip(base, 0, 255).astype(np.uint8))
+def make_paper() -> Image.Image:
+    rng = np.random.default_rng()
+    yy, xx = np.mgrid[0:PAPER_H, 0:PAPER_W]
+    gradient = (xx / (PAPER_W - 1) + yy / (PAPER_H - 1)) / 2.0
+    grain = rng.normal(0.0, 3.0, (PAPER_H, PAPER_W, 1))
+    arr = np.empty((PAPER_H, PAPER_W, 3), dtype=np.float32)
+    arr[:] = (250, 247, 240)
+    arr += grain
+    arr += gradient[:, :, None] * np.asarray((9, 5, -4), dtype=np.float32)
+    paper = Image.fromarray(np.uint8(np.clip(arr, 0, 255)), "RGB")
+    draw = ImageDraw.Draw(paper)
+    boxes: list[tuple[str, tuple[int, int, int, int]]] = []
+    cursor = 42
+    x0, x1 = MARGIN, PAPER_W - MARGIN
+    inner = x1 - x0
 
-# ------------------------------------------------------------------- the paper
-paper = Image.new("RGB", (PW, PH), (250, 247, 240))
-fib = rng.normal(0, 3.0, (PH, PW, 1)).repeat(3, axis=2)
-pyy, pxx = np.mgrid[0:PH, 0:PW].astype(np.float32)
-age = pxx / PW * 0.55 + pyy / PH * 0.45
-paper = Image.fromarray(np.clip(np.asarray(paper, np.float32) + fib
-                                + np.stack([age * 9, age * 5, -age * 4], axis=2), 0, 255).astype(np.uint8))
-pd = ImageDraw.Draw(paper)
-y = 46
+    def record(name: str, box: tuple[int, int, int, int]) -> None:
+        boxes.append((name, tuple(map(int, box))))
+
+    def text(name: str, xy: tuple[int, int], value: str, face: ImageFont.FreeTypeFont,
+             fill: tuple[int, ...] = INK, anchor: str | None = None) -> tuple[int, int, int, int]:
+        draw.text(xy, value, font=face, fill=fill, anchor=anchor)
+        bbox = draw.textbbox(xy, value, font=face, anchor=anchor)
+        record(name, bbox)
+        return bbox
+
+    def rule(name: str, y: int, width: int) -> None:
+        draw.rectangle((x0, y, x1, y + width - 1), fill=INK)
+        record(name, (x0, y, x1, y + width))
+
+    # Header row
+    header_face = font("arial.ttf", 23)
+    tracked = tracked_text(draw, (x0, cursor), "CITY OF VICE CITY", header_face, GREY)
+    record("city header", tracked)
+    form = "FORM 4-B"
+    form_face = font("arial.ttf", 23)
+    form_w = draw.textlength(form, font=form_face)
+    text("form label", (x1 - form_w, cursor), form, form_face, GREY)
+    cursor += 38
+
+    rule("top rule", cursor, 3)
+    cursor += 21
+
+    title = "PARKING CITATION"
+    title_face = fitting_font(draw, title, "arialbd.ttf", 60, inner)
+    text("title", (x0, cursor), title, title_face)
+    cursor += 78
+
+    rule("title divider", cursor, 2)
+    cursor += 22
+
+    # Two aligned columns, one reserved block.
+    col_gap = 34
+    col_w = (inner - col_gap) // 2
+    label_face = font("arial.ttf", 20)
+    left_x, right_x = x0, x0 + col_w + col_gap
+    text("issued label", (left_x, cursor), "ISSUED", label_face, GREY)
+    text("location label", (right_x, cursor), "LOCATION", label_face, GREY)
+    cursor += 30
+    issued_face = fitting_font(draw, "17 SEP 2013", "arialbd.ttf", 44, col_w)
+    location_face = fitting_font(draw, "OCEAN DRIVE", "arialbd.ttf", 44, col_w)
+    text("issued value", (left_x, cursor), "17 SEP 2013", issued_face)
+    text("location value", (right_x, cursor), "OCEAN DRIVE", location_face)
+    cursor += 61
+
+    text("vehicle label", (x0, cursor), "VEHICLE", label_face, GREY)
+    cursor += 30
+    vehicle = "WHITE INFERNUS · PLATE LUCIA-6"
+    vehicle_face = fitting_font(draw, vehicle, "arialbd.ttf", 40, inner)
+    text("vehicle value", (x0, cursor), vehicle, vehicle_face)
+    cursor += 60
+
+    rule("vehicle divider", cursor, 2)
+    cursor += 20
+
+    # Fee rows; dotted leaders are individual tracked rectangles.
+    fee_face = font("consolab.ttf", 28)
+    fee_rows = (("4,813 DAYS OVERTIME @ $0.25", "$1,203.25"),
+                ("PENALTIES, FEES & STORAGE", "$822.75"))
+    for idx, (description, price) in enumerate(fee_rows, start=1):
+        desc_w = draw.textlength(description, font=fee_face)
+        price_w = draw.textlength(price, font=fee_face)
+        desc_x = x0
+        price_x = x1 - price_w
+        dots_start = int(desc_x + desc_w + 10)
+        dots_end = int(price_x - 10)
+        if dots_end - dots_start < 18:
+            raise SystemExit(f"fee row {idx} has no room for dotted leader")
+        text(f"fee {idx} description", (desc_x, cursor), description, fee_face)
+        text(f"fee {idx} price", (price_x, cursor), price, fee_face)
+        dot_y = cursor + 16
+        for dx in range(dots_start, dots_end - 2, 9):
+            draw.rectangle((dx, dot_y, dx + 2, dot_y + 2), fill=GREY)
+            record(f"fee {idx} leader {dx}", (dx, dot_y, dx + 3, dot_y + 3))
+        cursor += 43
+
+    rule("total rule", cursor, 4)
+    cursor += 19
+
+    total_label_face = font("arial.ttf", 34)
+    total_value = "$2,026.00"
+    total_value_face = fitting_font(draw, total_value, "arialbd.ttf", 112, inner - 250)
+    text("total due label", (x0, cursor + 20), "TOTAL DUE", total_label_face, GREY)
+    total_w = draw.textlength(total_value, font=total_value_face)
+    text("total due value", (x1 - total_w, cursor), total_value, total_value_face)
+    cursor += 126
+
+    # Red distressed stamp, centered across the sheet.
+    stamp = Image.new("RGBA", (620, 146), (0, 0, 0, 0))
+    stamp_draw = ImageDraw.Draw(stamp)
+    stamp_draw.rounded_rectangle((4, 4, 616, 142), radius=14, outline=RED + (255,), width=6)
+    stamp_draw.rounded_rectangle((15, 15, 605, 131), radius=9, outline=RED + (255,), width=3)
+    stamp_text = "13 YEARS UNPAID"
+    stamp_face = fitting_font(stamp_draw, stamp_text, "arialbd.ttf", 70, 560)
+    stamp_bbox = stamp_draw.textbbox((0, 0), stamp_text, font=stamp_face)
+    stamp_x = (620 - (stamp_bbox[2] - stamp_bbox[0])) // 2 - stamp_bbox[0]
+    stamp_y = (146 - (stamp_bbox[3] - stamp_bbox[1])) // 2 - stamp_bbox[1]
+    stamp_draw.text((stamp_x, stamp_y), stamp_text, font=stamp_face, fill=RED + (255,))
+    stamp_arr = np.asarray(stamp).copy()
+    alpha = stamp_arr[:, :, 3]
+    distress = np.random.default_rng().random(alpha.shape) < 0.16
+    factors = np.random.default_rng().uniform(0.05, 0.5, alpha.shape)
+    alpha[distress] = (alpha[distress].astype(np.float32) * factors[distress]).astype(np.uint8)
+    stamp_arr[:, :, 3] = alpha
+    stamp = Image.fromarray(stamp_arr, "RGBA").rotate(-7, resample=Image.Resampling.BICUBIC, expand=True)
+    stamp_x = (PAPER_W - stamp.width) // 2
+    paper_rgba = paper.convert("RGBA")
+    paper_rgba.alpha_composite(stamp, (stamp_x, cursor))
+    record("rubber stamp", (stamp_x, cursor, stamp_x + stamp.width, cursor + stamp.height))
+    cursor += stamp.height + 18
+
+    punch = "THE CAR NEVER MOVED."
+    punch_face = fitting_font(draw, punch, "arialbd.ttf", 72, inner)
+    text("punchline", (x0, cursor), punch, punch_face)
+    cursor += 86
+
+    kicker = "PARKED THE DAY GTA V CAME OUT."
+    kicker_face = fitting_font(draw, kicker, "arialbd.ttf", 34, inner)
+    text("kicker", (x0, cursor), kicker, kicker_face, MAGENTA)
+    cursor += 52
+
+    rule("footer divider", cursor, 2)
+    cursor += 18
+
+    mark_path = ROOT / "assets" / "mark-1024.png"
+    if not mark_path.is_file():
+        raise SystemExit(f"required logo asset missing: {mark_path}")
+    logo = Image.open(mark_path).convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
+    paper_rgba.alpha_composite(logo, (x0, cursor))
+    record("ghost logo", (x0, cursor, x0 + 64, cursor + 64))
+    footer_x = x0 + 80
+    paid_face = font("arialbd.ttf", 27)
+    settled_face = font("arial.ttf", 20)
+    url_face = font("consola.ttf", 18)
+    text("paid line", (footer_x, cursor + 2), "PAID BY MY AI AGENT", paid_face)
+    text("settled line", (footer_x, cursor + 36), "settled with a bounty payout from make.fun", settled_face, GREY)
+    text("bounty url", (x0, cursor + 73), "make.fun/bounty/gta6-meme-x-01", url_face, GREY)
+    cursor += 103
+
+    if cursor > PAPER_H - 30:
+        raise SystemExit(f"content overflow: bottom {cursor} exceeds {PAPER_H - 30}")
+    for i, (name_a, a) in enumerate(boxes):
+        for name_b, b in boxes[i + 1:]:
+            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                raise SystemExit(f"layout collision: {name_a} overlaps {name_b}")
+    return paper_rgba.convert("RGB")
 
 
-def rule(at, colour=(196, 191, 184), weight=2):
-    pd.line([(M, at), (PW - M, at)], fill=colour, width=weight)
+def render() -> None:
+    background = make_background()
+    sheet = make_paper().rotate(-2.1, resample=Image.Resampling.BICUBIC, expand=True)
+    scaled_size = (round(sheet.width * 1.14), round(sheet.height * 1.14))
+    sheet = sheet.resize(scaled_size, Image.Resampling.LANCZOS)
+    sheet = sheet.transform(
+        sheet.size,
+        Image.Transform.PERSPECTIVE,
+        (1, 0, 0, 0, 1, 0, 0.00016, 0.000045),
+        resample=Image.Resampling.BICUBIC,
+    )
+    left = (W - sheet.width) // 2
+    top = (H - sheet.height) // 2 + 8
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rectangle((left + 10, top + 18, left + sheet.width + 10, top + sheet.height + 18), fill=(0, 0, 0, 190))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(26))
+    background = Image.alpha_composite(background.convert("RGBA"), shadow)
+    background.alpha_composite(sheet.convert("RGBA"), (left, top))
+    image = background.convert("RGB")
+
+    arr = np.asarray(image, dtype=np.float32)
+    arr += np.random.default_rng().normal(0.0, 3.6, arr.shape)
+    arr *= np.asarray((1.015, 1.0, 0.985), dtype=np.float32)
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    red = np.roll(arr[:, :, 0], 2, axis=1).astype(np.float32) * 0.55 + arr[:, :, 0].astype(np.float32) * 0.45
+    blue = np.roll(arr[:, :, 2], -2, axis=1).astype(np.float32) * 0.55 + arr[:, :, 2].astype(np.float32) * 0.45
+    arr[:, :, 0] = np.clip(red, 0, 255).astype(np.uint8)
+    arr[:, :, 2] = np.clip(blue, 0, 255).astype(np.uint8)
+    image = Image.fromarray(arr, "RGB").filter(ImageFilter.GaussianBlur(0.4))
+    image.save(ROOT / "meme.png", format="PNG")
+    image.resize((410, 512), Image.Resampling.LANCZOS).save(ROOT / "meme_480.png", format="PNG")
+    print(f"meme.png: {image.size[0]}x{image.size[1]}")
+    print("meme_480.png: 410x512")
 
 
-def tracked(xy, text, font, fill, track=3):
-    x, y0 = xy
-    for ch in text:
-        pd.text((x, y0), ch, font=font, fill=fill)
-        x += pd.textbbox((0, 0), ch, font=font)[2] + track
-
-
-tracked((M, y), "CITY OF VICE CITY", fnt(23), GREY)
-box("masthead", M, y - 2, M + 250, y + 32)
-fb = pd.textbbox((0, 0), "FORM 4-B", font=fnt(23))
-pd.text((PW - M - (fb[2] - fb[0]), y), "FORM 4-B", font=fnt(23), fill=GREY)
-box("form", PW - M - (fb[2] - fb[0]), y - 2, PW - M, y + 32)
-y += 46
-rule(y, INK, 3)
-y += 20
-
-f, bb = fit(pd, "PARKING CITATION", "bold", INNER, 60)
-th = bb[3] - bb[1]
-pd.text((M, y - bb[1]), "PARKING CITATION", font=f, fill=INK)
-box("title", M, y, M + (bb[2] - bb[0]), y + th)
-y += th + 24
-rule(y)
-y += 26
-
-for idx, (lbl, val) in enumerate((("ISSUED", "17 SEP 2013"), ("LOCATION", "OCEAN DRIVE"))):
-    x = M + idx * 430
-    pd.text((x, y), lbl, font=fnt(20), fill=GREY)
-    box("lbl_" + lbl, x, y - 2, x + 140, y + 26)
-    vf, vb = fit(pd, val, "bold", 404, 44)
-    vh = vb[3] - vb[1]
-    pd.text((x, y + 30 - vb[1]), val, font=vf, fill=INK)
-    box("val_" + lbl, x, y + 30, x + (vb[2] - vb[0]), y + 30 + vh)
-y += 104
-
-pd.text((M, y), "VEHICLE", font=fnt(20), fill=GREY)
-box("lbl_vehicle", M, y - 2, M + 120, y + 26)
-vf, vb = fit(pd, "WHITE INFERNUS \u00b7 PLATE LUCIA-6", "bold", INNER, 40)
-vh = vb[3] - vb[1]
-pd.text((M, y + 28 - vb[1]), "WHITE INFERNUS \u00b7 PLATE LUCIA-6", font=vf, fill=INK)
-box("vehicle", M, y + 28, M + (vb[2] - vb[0]), y + 28 + vh)
-y += 28 + vh + 26
-rule(y)
-y += 26
-
-
-def leader(at, desc, price):
-    fd = fnt(28, "mono")
-    pd.text((M, at), desc, font=fd, fill=INK)
-    pw_ = pd.textbbox((0, 0), price, font=fd)[2]
-    pd.text((PW - M - pw_, at), price, font=fd, fill=INK)
-    for dx in range(M + pd.textbbox((0, 0), desc, font=fd)[2] + 12, PW - M - pw_ - 12, 9):
-        pd.rectangle([dx, at + 19, dx + 3, at + 22], fill=(120, 116, 112))
-    box("fee_" + desc[:9], M, at - 2, PW - M, at + 34)
-
-
-leader(y, "4,813 DAYS OVERTIME @ $0.25", "$1,203.25")
-y += 44
-leader(y, "PENALTIES, FEES & STORAGE", "$822.75")
-y += 40
-rule(y, INK, 4)
-y += 22
-
-tf, tb = fit(pd, "$2,026.00", "bold", 520, 112)
-th = tb[3] - tb[1]
-pd.text((M, y + (th - 40) // 2), "TOTAL DUE", font=fnt(34), fill=GREY)
-box("total_lbl", M, y, M + 230, y + th)
-pd.text((PW - M - (tb[2] - tb[0]), y - tb[1]), "$2,026.00", font=tf, fill=INK)
-box("total_val", PW - M - (tb[2] - tb[0]), y, PW - M, y + th)
-y += th + 30
-
-stamp = Image.new("RGBA", (620, 146), (0, 0, 0, 0))
-sd = ImageDraw.Draw(stamp)
-sd.rounded_rectangle([6, 6, 614, 140], radius=10, outline=RED + (255,), width=6)
-sd.rounded_rectangle([18, 18, 602, 128], radius=6, outline=RED + (255,), width=3)
-sf, sb = fit(sd, "13 YEARS UNPAID", "bold", 540, 70)
-sd.text(((620 - (sb[2] - sb[0])) // 2, 32), "13 YEARS UNPAID", font=sf, fill=RED + (255,))
-sa = np.array(stamp)                                  # distressed rubber
-hole = rng.random((146, 620)) < 0.16
-sa[..., 3] = np.where(hole, (sa[..., 3] * rng.uniform(0.05, 0.5)).astype(np.uint8), sa[..., 3])
-stamp = Image.fromarray(sa).rotate(-7.0, resample=Image.Resampling.BICUBIC, expand=True)
-STAMP_TOP, STAMP_LEFT = y + 6, (PW - stamp.width) // 2
-box("stamp", M, y, PW - M, y + stamp.height + 10)
-y += stamp.height + 28
-
-pf, pb = fit(pd, "THE CAR NEVER MOVED.", "bold", INNER, 72)
-ph = pb[3] - pb[1]
-pd.text((M, y - pb[1]), "THE CAR NEVER MOVED.", font=pf, fill=INK)
-box("punch", M, y, M + (pb[2] - pb[0]), y + ph)
-y += ph + 22
-kf, kb = fit(pd, "PARKED THE DAY GTA V CAME OUT.", "bold", INNER, 34)
-kh = kb[3] - kb[1]
-pd.text((M, y - kb[1]), "PARKED THE DAY GTA V CAME OUT.", font=kf, fill=MG)
-box("kicker", M, y, M + (kb[2] - kb[0]), y + kh)
-y += kh + 26
-rule(y)
-y += 24
-
-ghost = Image.open("assets/mark-1024.png").convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
-pd.text((M + 80, y), "PAID BY MY AI AGENT", font=fnt(27), fill=INK)
-box("agent_title", M + 80, y - 2, M + 380, y + 32)
-pd.text((M + 80, y + 34), "settled with a bounty payout from make.fun", font=fnt(20, "reg"), fill=GREY)
-box("agent_sub", M + 80, y + 32, M + 460, y + 62)
-pd.text((M, y + 74), "make.fun/bounty/gta6-meme-x-01", font=fnt(18, "monor"), fill=GREY)
-box("url", M, y + 72, M + 320, y + 98)
-box("ghost", M, y, M + 64, y + 64)
-if y + 98 > PH - 30:
-    raise SystemExit(f"CONTENT OVERFLOWS PAPER: {y + 98} > {PH - 30}")
-check_boxes()
-print(f"layout ok: {len(BOXES)} boxes, no collisions, bottom {y + 98}/{PH}")
-
-paper.paste(ghost, (M, y), ghost)
-paper = paper.convert("RGBA")
-paper.alpha_composite(stamp, (STAMP_LEFT, STAMP_TOP))
-paper = paper.convert("RGB")
-
-# ------------------------------------------------------- camera: tilt + keystone
-rot = paper.rotate(-2.1, resample=Image.Resampling.BICUBIC, expand=True)
-rw, rh = rot.size
-rot = rot.resize((int(rw * 1.14), int(rh * 1.14)), Image.Resampling.LANCZOS)
-rw, rh = rot.size
-g, h_ = 0.00016, 0.000045
-persp = rot.transform((rw, rh), Image.PERSPECTIVE,
-                      (1, 0, -g * rw * 0.5, 0, 1, -h_ * rh * 0.5, g, h_),
-                      resample=Image.Resampling.BICUBIC)
-ox, oy = (W - rw) // 2, (H - rh) // 2 + 8
-shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-shadow.paste(Image.new("RGBA", (rw, rh), (0, 0, 0, 190)), (ox + 10, oy + 18))
-out = surface.convert("RGBA")
-out.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(26)))
-out.alpha_composite(persp.convert("RGBA"), (ox, oy))
-out = out.convert("RGB")
-
-# --------------------------------------------------------- sensor + lens artefacts
-arr = np.asarray(out, np.float32)
-arr += rng.normal(0, 3.6, arr.shape)
-arr *= np.array([1.015, 1.0, 0.985], np.float32)
-r, b = arr[..., 0], arr[..., 2]
-arr[..., 0] = r * 0.55 + np.roll(r, 2, axis=1) * 0.45
-arr[..., 2] = b * 0.55 + np.roll(b, -2, axis=1) * 0.45
-out = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.4))
-
-out.save("meme.png", "PNG")
-out.resize((410, 512), Image.Resampling.LANCZOS).save("meme_480.png", "PNG")
-print(f"rendered meme.png {out.size} + the 410x512 copy the judge receives")
+if __name__ == "__main__":
+    render()
